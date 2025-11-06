@@ -104,9 +104,9 @@ print("10Y Yield % change:", round(Tres_Yield_pct_change, 2))
 index_strength = 0.25
 if dol_ind_pct_change.iloc[0] < 0:
     index_strength += 0.25
-if m2_pct_change.iloc[0] > 0:
+if m2_pct_change > 0:
     index_strength += 0.25
-if Tres_Yield_pct_change.iloc[0] > 0:
+if Tres_Yield_pct_change > 0:
     index_strength += 0.25
 print("Index strength:", index_strength)
 
@@ -187,6 +187,7 @@ try:
     print("SMS sent:", message.sid)
 except Exception as e:
     print("Error sending SMS:", e)
+
 
 
 
