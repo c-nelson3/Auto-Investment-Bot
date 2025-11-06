@@ -2,7 +2,7 @@ name: Run Auto Investment Bot
 
 on:
   schedule:
-    - cron: '30 16 * * 4'  # Every Thursday 10:30 AM CST
+    - cron: '0 15 * * 1'  # Every Thursday 10:30 AM CST
   workflow_dispatch:
 
 jobs:
