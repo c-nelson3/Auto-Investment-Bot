@@ -1,10 +1,16 @@
 
 
-import os
+import subprocess, sys, os
+
+# --- Fix yfinance/websockets issue on GitHub Actions ---
+subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "websockets"], check=False)
+subprocess.run([sys.executable, "-m", "pip", "install", "--no-cache-dir", "websockets==12.0"], check=True)
+
 os.environ["YFINANCE_NO_WEBSOCKETS"] = "true"
 
-import sys
-print("YFINANCE_NO_WEBSOCKETS set:", os.environ.get("YFINANCE_NO_WEBSOCKETS"))
+# Optional: confirm version
+import importlib.metadata
+print("✅ websockets version:", importlib.metadata.version("websockets"))
 from datetime import date, timedelta
 import pandas as pd
 import yfinance as yf
@@ -181,5 +187,6 @@ try:
     print("SMS sent:", message.sid)
 except Exception as e:
     print("Error sending SMS:", e)
+
 
 
