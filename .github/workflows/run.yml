@@ -20,13 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip uninstall -y websockets || true
-          pip uninstall -y yfinance || true
-          pip install --no-cache-dir "websockets==12.0"
-          pip install --no-cache-dir "yfinance>=0.2.40"
-          pip install --no-cache-dir pandas requests twilio "alpaca-trade-api>=3.0.0"
-          python -m pip show websockets
-          python -m pip show yfinance
+          pip install pandas requests twilio "yfinance>=0.2.40" "alpaca-trade-api>=3.0.0"
 
       - name: Run script
         env:
