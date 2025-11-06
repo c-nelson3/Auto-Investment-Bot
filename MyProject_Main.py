@@ -1,87 +1,84 @@
 
 
 import subprocess, sys, os
-
-# --- Fix yfinance/websockets issue on GitHub Actions ---
-subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "websockets"], check=False)
-subprocess.run([sys.executable, "-m", "pip", "install", "--no-cache-dir", "websockets==12.0"], check=True)
-
-os.environ["YFINANCE_NO_WEBSOCKETS"] = "true"
-
-# Optional: confirm version
-import importlib.metadata
-print("✅ websockets version:", importlib.metadata.version("websockets"))
 from datetime import date, timedelta
 import pandas as pd
 import yfinance as yf
 import requests
 from alpaca_trade_api.rest import REST
 from twilio.rest import Client
+import importlib.metadata
 
-# =========================
+# ==========================================================
+# FIX FOR YFINANCE/WEBSOCKETS CONFLICT (GitHub Actions)
+# ==========================================================
+subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "websockets"], check=False)
+subprocess.run([sys.executable, "-m", "pip", "install", "--no-cache-dir", "websockets==12.0"], check=True)
+os.environ["YFINANCE_NO_WEBSOCKETS"] = "true"
+
+print("✅ websockets version:", importlib.metadata.version("websockets"))
+
+# ==========================================================
+# HELPER FUNCTIONS
+# ==========================================================
+def scalar(x):
+    """Safely extract a scalar from a Pandas Series or return the value itself."""
+    if isinstance(x, pd.Series) and not x.empty:
+        return x.iloc[0]
+    return x
+
+# ==========================================================
 # DATE SETUP
-# =========================
+# ==========================================================
 today = date.today()
 print("Today's date:", today)
-
 last_mond = today - timedelta(days=7)
 last_fri = today - timedelta(days=3)
 
-# =========================
+# ==========================================================
 # BITCOIN WEEKLY PERFORMANCE
-# =========================
+# ==========================================================
 bitcoin = yf.download("FBTC", start=last_mond, end=last_fri)
 perf = round((bitcoin["Close"].iloc[-1] - bitcoin["Close"].iloc[0]) / bitcoin["Close"].iloc[0] * 100, 2)
 print("FBTC % change:", perf)
 
-# =========================
+# ==========================================================
 # FEAR AND GREED INDEX
-# =========================
+# ==========================================================
 url = "https://pro-api.coinmarketcap.com/v3/fear-and-greed/latest"
-headers = {
-    "Accepts": "application/json",
-    "X-CMC_PRO_API_KEY": os.getenv("CMC_KEY")
-}
+headers = {"Accepts": "application/json", "X-CMC_PRO_API_KEY": os.getenv("CMC_KEY")}
 response = requests.get(url, headers=headers)
 response.raise_for_status()
 data = response.json()
-fng_value = data["data"]["value"]
+fng_value = int(data["data"]["value"])
 print("Fear & Greed Index:", fng_value)
 
-# =========================
+# ==========================================================
 # US DOLLAR INDEX (DXY)
-# =========================
-us_dol_ind = yf.download("DX-Y.NYB", start=last_mond - timedelta(days=7), end=today, interval="1d")
-us_dol_ind = us_dol_ind.sort_index()
-close_mond = us_dol_ind["Close"].asof(str(last_mond))
-close_fri = us_dol_ind["Close"].asof(str(last_fri))
+# ==========================================================
+us_dol_ind = yf.download("DX-Y.NYB", start=last_mond - timedelta(days=7), end=today, interval="1d").sort_index()
+close_mond = scalar(us_dol_ind["Close"].asof(str(last_mond)))
+close_fri = scalar(us_dol_ind["Close"].asof(str(last_fri)))
 dol_ind_pct_change = ((close_fri - close_mond) / close_mond) * 100
 print("USD Index % change:", round(dol_ind_pct_change, 2))
 
-# =========================
+# ==========================================================
 # M2 MONEY SUPPLY
-# =========================
+# ==========================================================
 fred_key = os.getenv("FRED_KEY")
 url = "https://api.stlouisfed.org/fred/series/observations"
-params = {
-    "series_id": "M2SL",
-    "api_key": fred_key,
-    "file_type": "json",
-    "observation_start": "2010-01-01"
-}
+params = {"series_id": "M2SL", "api_key": fred_key, "file_type": "json", "observation_start": "2010-01-01"}
 response = requests.get(url, params=params)
 m2 = pd.DataFrame(response.json()["observations"])
 m2["date"] = pd.to_datetime(m2["date"])
 m2["value"] = pd.to_numeric(m2["value"], errors="coerce")
 m2 = m2.dropna(subset=["value"]).set_index("date").sort_index()
-latest = m2.iloc[-1]["value"]
-previous = m2.iloc[-2]["value"]
-m2_pct_change = ((latest - previous) / previous) * 100
+m2_pct_change = ((m2.iloc[-1]["value"] - m2.iloc[-2]["value"]) / m2.iloc[-2]["value"]) * 100
 print("M2 % change:", round(m2_pct_change, 2))
 
-# =========================
+# ==========================================================
 # 10-YEAR TREASURY YIELD
-# =========================
+# ==========================================================
 params = {
     "series_id": "DGS10",
     "api_key": fred_key,
@@ -93,16 +90,16 @@ treas10 = pd.DataFrame(response.json()["observations"])
 treas10["date"] = pd.to_datetime(treas10["date"])
 treas10["value"] = pd.to_numeric(treas10["value"], errors="coerce")
 treas10 = treas10.dropna(subset=["value"]).set_index("date").sort_index()
-close_mond = treas10["value"].asof(str(last_mond))
-close_fri = treas10["value"].asof(str(last_fri))
+close_mond = scalar(treas10["value"].asof(str(last_mond)))
+close_fri = scalar(treas10["value"].asof(str(last_fri)))
 Tres_Yield_pct_change = ((close_fri - close_mond) / close_mond) * 100
 print("10Y Yield % change:", round(Tres_Yield_pct_change, 2))
 
-# =========================
+# ==========================================================
 # INDEX STRENGTH LOGIC
-# =========================
+# ==========================================================
 index_strength = 0.25
-if dol_ind_pct_change.iloc[0] < 0:
+if dol_ind_pct_change < 0:
     index_strength += 0.25
 if m2_pct_change > 0:
     index_strength += 0.25
@@ -110,9 +107,9 @@ if Tres_Yield_pct_change > 0:
     index_strength += 0.25
 print("Index strength:", index_strength)
 
-# =========================
+# ==========================================================
 # ALLOCATIONS
-# =========================
+# ==========================================================
 contribution = 150
 alloc = {"BTC-USD": 0, "VOO": 0, "BIL": 0}
 
@@ -136,49 +133,36 @@ bil_alloc = contribution * alloc["BIL"]
 
 print(f"BTC alloc: ${btc_alloc:.2f}, VOO alloc: ${voo_alloc:.2f}, BIL alloc: ${bil_alloc:.2f}")
 
-# =========================
+# ==========================================================
 # ALPACA ORDERS
-# =========================
+# ==========================================================
 api = REST(
     os.getenv("ALPACA_KEY_ID"),
     os.getenv("ALPACA_SECRET_KEY"),
     base_url="https://paper-api.alpaca.markets"
 )
 
-allocations = {
-    "FBTC": btc_alloc,
-    "VOO": voo_alloc,
-    "VBIL": bil_alloc
-}
+allocations = {"FBTC": btc_alloc, "VOO": voo_alloc, "VBIL": bil_alloc}
 
 for symbol, notional in allocations.items():
     if notional > 0:
-        api.submit_order(
-            symbol=symbol,
-            notional=notional,
-            side="buy",
-            type="market",
-            time_in_force="day"
-        )
+        api.submit_order(symbol=symbol, notional=notional, side="buy", type="market", time_in_force="day")
 
-# =========================
+# ==========================================================
 # TWILIO SUMMARY TEXT
-# =========================
+# ==========================================================
 summary = (
     f"Weekly Allocation Summary ({today}):\n"
     f"FBTC: ${btc_alloc:.2f}, VOO: ${voo_alloc:.2f}, BIL: ${bil_alloc:.2f}\n\n"
     f"F&G Index: {fng_value}\n"
-    f"USD Δ: {dol_ind_pct_change:.2f}% | M2 Δ: {m2_pct_change:.2f}% | 10Y Δ: {Tres_Yield_pct_change:.2f}%\n"
+    f"USD Δ: {round(dol_ind_pct_change, 2):.2f}% | M2 Δ: {round(m2_pct_change, 2):.2f}% | 10Y Δ: {round(Tres_Yield_pct_change, 2):.2f}%\n"
     f"Index Strength: {index_strength}"
 )
 
 print(summary)
 
 try:
-    client = Client(
-        os.getenv("TWILIO_ACCOUNT_SID"),
-        os.getenv("TWILIO_AUTH_TOKEN")
-    )
+    client = Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
     message = client.messages.create(
         to=os.getenv("MY_PHONE_NUMBER"),
         from_=os.getenv("TWILIO_PHONE_NUMBER"),
@@ -187,6 +171,7 @@ try:
     print("SMS sent:", message.sid)
 except Exception as e:
     print("Error sending SMS:", e)
+
 
 
 
