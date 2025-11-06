@@ -1,6 +1,6 @@
 
 
-import subprocess, sys, os
+import subprocess, sys, os, csv
 from datetime import date, timedelta
 import pandas as pd
 import yfinance as yf
@@ -26,6 +26,77 @@ def scalar(x):
     if isinstance(x, pd.Series) and not x.empty:
         return x.iloc[0]
     return x
+
+
+def get_allocations(fng_value, index_strength, contribution=150):
+    """Calculate allocations dynamically based on Fear & Greed Index and macro index strength."""
+    risk_zones = [
+        {"min": 0, "max": 35, "btc_factor": 1.0, "desc": "Extreme Fear"},
+        {"min": 35, "max": 50, "btc_factor": 0.75, "desc": "Fear"},
+        {"min": 50, "max": 80, "btc_factor": 0.5, "desc": "Neutral/Greed"},
+        {"min": 80, "max": 101, "btc_factor": 0.0, "desc": "Extreme Greed"},
+    ]
+
+    alloc = {"BTC-USD": 0, "VOO": 0, "BIL": 0}
+
+    # Find F&G zone
+    for z in risk_zones:
+        if z["min"] <= fng_value < z["max"]:
+            btc_factor = z["btc_factor"]
+            zone_desc = z["desc"]
+            break
+    else:
+        btc_factor = 0.5
+        zone_desc = "Unknown"
+
+    # --- Allocation logic ---
+    btc_weight = index_strength * btc_factor
+    equity_weight = (1 - btc_weight) * (1 if btc_factor >= 0.5 else 0.5)
+    cash_weight = 1 - btc_weight - equity_weight
+
+    # Normalize weights
+    total = btc_weight + equity_weight + cash_weight
+    for k, v in [("BTC-USD", btc_weight), ("VOO", equity_weight), ("BIL", cash_weight)]:
+        alloc[k] = v / total
+
+    # Convert to dollars
+    alloc_dollars = {k: v * contribution for k, v in alloc.items()}
+
+    print("\n========== ALLOCATION LOGIC ==========")
+    print(f"F&G Zone: {zone_desc} ({fng_value}) | Index Strength: {index_strength:.2f}")
+    print(f"BTC Factor: {btc_factor} → BTC Weight: {alloc['BTC-USD']:.2f}")
+    print(f"VOO Weight: {alloc['VOO']:.2f} | BIL Weight: {alloc['BIL']:.2f}")
+    print("======================================\n")
+
+    return alloc, alloc_dollars, zone_desc, btc_factor
+
+
+def log_allocation(
+    today, fng_value, zone_desc, index_strength,
+    dol_ind_pct_change, m2_pct_change, Tres_Yield_pct_change,
+    alloc
+):
+    """Append the week’s allocation and macro data to a CSV log file."""
+    file_path = "allocation_history.csv"
+    headers = [
+        "Date", "F&G Index", "Zone", "Index Strength",
+        "USD %Δ", "M2 %Δ", "10Y %Δ",
+        "BTC Weight", "VOO Weight", "BIL Weight"
+    ]
+    row = [
+        today, fng_value, zone_desc, round(index_strength, 2),
+        round(dol_ind_pct_change, 2), round(m2_pct_change, 2), round(Tres_Yield_pct_change, 2),
+        round(alloc["BTC-USD"], 2), round(alloc["VOO"], 2), round(alloc["BIL"], 2)
+    ]
+    write_header = not os.path.exists(file_path)
+
+    with open(file_path, mode="a", newline="") as f:
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow(headers)
+        writer.writerow(row)
+    print(f"✅ Logged weekly data to {file_path}\n")
+
 
 # ==========================================================
 # DATE SETUP
@@ -108,45 +179,34 @@ if Tres_Yield_pct_change > 0:
 print("Index strength:", index_strength)
 
 # ==========================================================
-# ALLOCATIONS
+# DYNAMIC ALLOCATIONS
 # ==========================================================
-contribution = 150
-alloc = {"BTC-USD": 0, "VOO": 0, "BIL": 0}
+alloc, alloc_dollars, zone_desc, btc_factor = get_allocations(fng_value, index_strength, contribution=150)
 
-if fng_value < 35:
-    alloc["BTC-USD"] = index_strength
-    alloc["VOO"] = 1 - index_strength
-elif 35 <= fng_value < 50:
-    alloc["BTC-USD"] = 0.75 * index_strength
-    alloc["VOO"] = 1 - alloc["BTC-USD"]
-elif 50 <= fng_value < 80:
-    alloc["BTC-USD"] = 0.5 * index_strength
-    remaining = 1 - alloc["BTC-USD"]
-    alloc["VOO"] = remaining / 2
-    alloc["BIL"] = remaining / 2
-else:
-    alloc["BIL"] = 1.0
-
-btc_alloc = contribution * alloc["BTC-USD"]
-voo_alloc = contribution * alloc["VOO"]
-bil_alloc = contribution * alloc["BIL"]
+btc_alloc = alloc_dollars["BTC-USD"]
+voo_alloc = alloc_dollars["VOO"]
+bil_alloc = alloc_dollars["BIL"]
 
 print(f"BTC alloc: ${btc_alloc:.2f}, VOO alloc: ${voo_alloc:.2f}, BIL alloc: ${bil_alloc:.2f}")
 
 # ==========================================================
+# LOG WEEKLY DATA
+# ==========================================================
+log_allocation(today, fng_value, zone_desc, index_strength,
+               dol_ind_pct_change, m2_pct_change, Tres_Yield_pct_change, alloc)
+
+# ==========================================================
 # ALPACA ORDERS
 # ==========================================================
-api = REST(
-    os.getenv("ALPACA_KEY_ID"),
-    os.getenv("ALPACA_SECRET_KEY"),
-    base_url="https://paper-api.alpaca.markets"
-)
+api = REST(os.getenv("ALPACA_KEY_ID"), os.getenv("ALPACA_SECRET_KEY"),
+           base_url="https://paper-api.alpaca.markets")
 
 allocations = {"FBTC": btc_alloc, "VOO": voo_alloc, "VBIL": bil_alloc}
 
 for symbol, notional in allocations.items():
     if notional > 0:
-        api.submit_order(symbol=symbol, notional=notional, side="buy", type="market", time_in_force="day")
+        api.submit_order(symbol=symbol, notional=notional,
+                         side="buy", type="market", time_in_force="day")
 
 # ==========================================================
 # TWILIO SUMMARY TEXT
@@ -154,9 +214,10 @@ for symbol, notional in allocations.items():
 summary = (
     f"Weekly Allocation Summary ({today}):\n"
     f"FBTC: ${btc_alloc:.2f}, VOO: ${voo_alloc:.2f}, BIL: ${bil_alloc:.2f}\n\n"
-    f"F&G Index: {fng_value}\n"
+    f"F&G Index: {fng_value} ({zone_desc})\n"
     f"USD Δ: {round(dol_ind_pct_change, 2):.2f}% | M2 Δ: {round(m2_pct_change, 2):.2f}% | 10Y Δ: {round(Tres_Yield_pct_change, 2):.2f}%\n"
-    f"Index Strength: {index_strength}"
+    f"Index Strength: {index_strength:.2f} | BTC Factor: {btc_factor}\n"
+    f"Weights → BTC: {alloc['BTC-USD']:.2f}, VOO: {alloc['VOO']:.2f}, BIL: {alloc['BIL']:.2f}"
 )
 
 print(summary)
@@ -171,6 +232,7 @@ try:
     print("SMS sent:", message.sid)
 except Exception as e:
     print("Error sending SMS:", e)
+
 
 
 
