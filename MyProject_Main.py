@@ -1,9 +1,12 @@
 
-import os
-from datetime import date, timedelta
-import pandas as pd
+
 import os
 os.environ["YFINANCE_NO_WEBSOCKETS"] = "true"
+
+import sys
+print("YFINANCE_NO_WEBSOCKETS set:", os.environ.get("YFINANCE_NO_WEBSOCKETS"))
+from datetime import date, timedelta
+import pandas as pd
 import yfinance as yf
 import requests
 from alpaca_trade_api.rest import REST
@@ -178,4 +181,5 @@ try:
     print("SMS sent:", message.sid)
 except Exception as e:
     print("Error sending SMS:", e)
+
 
