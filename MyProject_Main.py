@@ -10,18 +10,16 @@ from twilio.rest import Client
 import importlib.metadata
 import numpy as np
 
-# ==========================================================
+
 # FIX FOR YFINANCE/WEBSOCKETS CONFLICT (GitHub Actions)
-# ==========================================================
 subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "websockets"], check=False)
 subprocess.run([sys.executable, "-m", "pip", "install", "--no-cache-dir", "websockets==12.0"], check=True)
 os.environ["YFINANCE_NO_WEBSOCKETS"] = "true"
 
 print("✅ websockets version:", importlib.metadata.version("websockets"))
 
-# ==========================================================
-# HELPER FUNCTIONS
-# ==========================================================
+
+#using scaler to deal with iloc issues for bringing in API info
 def scalar(x):
     """Safely extract a scalar from a Pandas Series or return the value itself."""
     if isinstance(x, pd.Series) and not x.empty:
@@ -99,24 +97,19 @@ def log_allocation(
         writer.writerow(row)
     print(f"✅ Logged weekly data to {file_path}\n")
 
-# ==========================================================
-# DATE SETUP
-# ==========================================================
+
+# getting date information to find last week trend from fng, us dollar index, and 10 year treasury yield
 today = date.today()
 print("Today's date:", today)
 last_mond = today - timedelta(days=7)
 last_fri = today - timedelta(days=3)
 
-# ==========================================================
-# BITCOIN WEEKLY PERFORMANCE
-# ==========================================================
+#bringing in bitcoin weekly performance
 bitcoin = yf.download("FBTC", start=last_mond, end=last_fri)
 perf = round((bitcoin["Close"].iloc[-1] - bitcoin["Close"].iloc[0]) / bitcoin["Close"].iloc[0] * 100, 2)
 print("FBTC % change:", perf)
 
-# ==========================================================
-# FEAR AND GREED INDEX
-# ==========================================================
+#bringing in the fear and greed index which will be the starting point for allocation decision
 url = "https://pro-api.coinmarketcap.com/v3/fear-and-greed/latest"
 headers = {"Accepts": "application/json", "X-CMC_PRO_API_KEY": os.getenv("CMC_KEY")}
 response = requests.get(url, headers=headers)
@@ -125,18 +118,14 @@ data = response.json()
 fng_value = int(data["data"]["value"])
 print("Fear & Greed Index:", fng_value)
 
-# ==========================================================
-# US DOLLAR INDEX (DXY)
-# ==========================================================
+#Bringing in the US dollar index to find last weeks trend (if trending down then bullish for bitcoin)
 us_dol_ind = yf.download("DX-Y.NYB", start=last_mond - timedelta(days=7), end=today, interval="1d").sort_index()
 close_mond = scalar(us_dol_ind["Close"].asof(str(last_mond)))
 close_fri = scalar(us_dol_ind["Close"].asof(str(last_fri)))
 dol_ind_pct_change = ((close_fri - close_mond) / close_mond) * 100
 print("USD Index % change:", round(dol_ind_pct_change, 2))
 
-# ==========================================================
-# M2 MONEY SUPPLY
-# ==========================================================
+#Bringing in M2 money supply, represents monthly trend of liquidity in market, if increasing then bullish for bitcoin
 fred_key = os.getenv("FRED_KEY")
 url = "https://api.stlouisfed.org/fred/series/observations"
 params = {"series_id": "M2SL", "api_key": fred_key, "file_type": "json", "observation_start": "2010-01-01"}
@@ -148,9 +137,7 @@ m2 = m2.dropna(subset=["value"]).set_index("date").sort_index()
 m2_pct_change = ((m2.iloc[-1]["value"] - m2.iloc[-2]["value"]) / m2.iloc[-2]["value"]) * 100
 print("M2 % change:", round(m2_pct_change, 2))
 
-# ==========================================================
-# 10-YEAR TREASURY YIELD
-# ==========================================================
+#Bringing in the 10 year treasury yield an increase in the 10 year is typically bullish for bitcoin
 params = {
     "series_id": "DGS10",
     "api_key": fred_key,
@@ -167,11 +154,9 @@ close_fri = scalar(treas10["value"].asof(str(last_fri)))
 Tres_Yield_pct_change = ((close_fri - close_mond) / close_mond) * 100
 print("10Y Yield % change:", round(Tres_Yield_pct_change, 2))
 
-# ==========================================================
-# INDEX STRENGTH LOGIC
-# ==========================================================
+#Index strength variable [.25,1] depending on collective trend narrative for bitcoin
 index_strength = 0.25
-if dol_ind_pct_change < 0:
+if dol_ind_pct_change < 0: #if us dollar is falling then that's bullish for bitcoin so the index_strength increases
     index_strength += 0.25
 if m2_pct_change > 0:
     index_strength += 0.25
@@ -179,9 +164,7 @@ if Tres_Yield_pct_change > 0:
     index_strength += 0.25
 print("Index strength:", index_strength)
 
-# ==========================================================
-# DYNAMIC ALLOCATIONS
-# ==========================================================
+#Calling get_allocations to determine cash spread between bitcoin, voo, and TBIL 
 alloc, alloc_dollars, zone_desc, btc_factor = get_allocations(fng_value, index_strength, contribution=150)
 
 btc_alloc = alloc_dollars["BTC-USD"]
@@ -190,9 +173,8 @@ bil_alloc = alloc_dollars["BIL"]
 
 print(f"BTC alloc: ${btc_alloc:.2f}, VOO alloc: ${voo_alloc:.2f}, BIL alloc: ${bil_alloc:.2f}")
 
-# ==========================================================
-# ALPACA ORDERS
-# ==========================================================
+
+#connecting to alpaca paper market to make orders based off of allocation amounts
 api = REST(os.getenv("ALPACA_KEY_ID"), os.getenv("ALPACA_SECRET_KEY"),
            base_url="https://paper-api.alpaca.markets")
 
@@ -203,9 +185,7 @@ for symbol, notional in allocations.items():
         api.submit_order(symbol=symbol, notional=notional,
                          side="buy", type="market", time_in_force="day")
 
-# ==========================================================
-# PORTFOLIO SUMMARY + SHARPE RATIO
-# ==========================================================
+#prints out portfolio summary and the sharpe ratio indicating risk adjusted returns
 sharpe_ratio = None
 try:
     print("\n========== CURRENT PORTFOLIO SUMMARY ==========")
@@ -248,15 +228,11 @@ try:
 except Exception as e:
     print("Error retrieving portfolio summary:", e)
 
-# ==========================================================
-# LOG WEEKLY DATA
-# ==========================================================
+#function outputs current run info and allocations to a running csv will be used in the future as historical training data
 log_allocation(today, fng_value, zone_desc, index_strength,
                dol_ind_pct_change, m2_pct_change, Tres_Yield_pct_change, alloc, sharpe_ratio)
 
-# ==========================================================
-# TWILIO SUMMARY TEXT
-# ==========================================================
+#using twilio to send text update on allocations made and portfolio performance
 summary = (
     f"Weekly Allocation Summary ({today}):\n"
     f"FBTC: ${btc_alloc:.2f}, VOO: ${voo_alloc:.2f}, BIL: ${bil_alloc:.2f}\n\n"
@@ -279,6 +255,7 @@ try:
     print("SMS sent:", message.sid)
 except Exception as e:
     print("Error sending SMS:", e)
+
 
 
 
