@@ -2,7 +2,7 @@ name: Run Auto Investment Bot
 
 on:
   schedule:
-    - cron: '0 15 * * 4'  # Every Monday 9 AM CST (14:00 UTC)
+    - cron: '30 16 * * 4'  # Every Monday 9 AM CST (14:00 UTC)
   workflow_dispatch:       # allows manual run from GitHub UI
 
 jobs:
@@ -19,7 +19,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install yfinance requests pandas alpaca-trade-api twilio
+           pip install yfinance requests pandas alpaca-trade-api twilio alpha_vantage
 
       - name: Run script
         env:
