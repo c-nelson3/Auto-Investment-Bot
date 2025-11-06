@@ -1,0 +1,34 @@
+name: Run Auto Investment Bot
+
+on:
+  schedule:
+    - cron: '0 15 * * 1'  # Every Monday 9 AM CST (14:00 UTC)
+  workflow_dispatch:       # allows manual run from GitHub UI
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install yfinance requests pandas alpaca-trade-api twilio
+
+      - name: Run script
+        env:
+          ALPACA_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          CMC_KEY: ${{ secrets.CMC_KEY }}
+          FRED_KEY: ${{ secrets.FRED_KEY }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_PHONE_NUMBER: ${{ secrets.TWILIO_PHONE_NUMBER }}
+          MY_PHONE_NUMBER: ${{ secrets.MY_PHONE_NUMBER }}
+        run: python MyProject_Main.py
