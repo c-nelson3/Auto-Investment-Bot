@@ -19,7 +19,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-           pip install yfinance requests pandas alpaca-trade-api twilio alpha_vantage
+          pip install --upgrade pip
+          pip install yfinance requests pandas alpaca-trade-api twilio alpha_vantage
 
       - name: Run script
         env:
