@@ -8,6 +8,7 @@ import requests
 from alpaca_trade_api.rest import REST
 from twilio.rest import Client
 import importlib.metadata
+import numpy as np
 
 # ==========================================================
 # FIX FOR YFINANCE/WEBSOCKETS CONFLICT (GitHub Actions)
@@ -74,19 +75,20 @@ def get_allocations(fng_value, index_strength, contribution=150):
 def log_allocation(
     today, fng_value, zone_desc, index_strength,
     dol_ind_pct_change, m2_pct_change, Tres_Yield_pct_change,
-    alloc
+    alloc, sharpe_ratio
 ):
-    """Append the week’s allocation and macro data to a CSV log file."""
+    """Append the week’s allocation, macro data, and Sharpe ratio to a CSV log file."""
     file_path = "allocation_history.csv"
     headers = [
         "Date", "F&G Index", "Zone", "Index Strength",
         "USD %Δ", "M2 %Δ", "10Y %Δ",
-        "BTC Weight", "VOO Weight", "BIL Weight"
+        "BTC Weight", "VOO Weight", "BIL Weight", "Sharpe Ratio (60d)"
     ]
     row = [
         today, fng_value, zone_desc, round(index_strength, 2),
         round(dol_ind_pct_change, 2), round(m2_pct_change, 2), round(Tres_Yield_pct_change, 2),
-        round(alloc["BTC-USD"], 2), round(alloc["VOO"], 2), round(alloc["BIL"], 2)
+        round(alloc["BTC-USD"], 2), round(alloc["VOO"], 2), round(alloc["BIL"], 2),
+        round(sharpe_ratio, 2) if sharpe_ratio is not None else ""
     ]
     write_header = not os.path.exists(file_path)
 
@@ -96,7 +98,6 @@ def log_allocation(
             writer.writerow(headers)
         writer.writerow(row)
     print(f"✅ Logged weekly data to {file_path}\n")
-
 
 # ==========================================================
 # DATE SETUP
@@ -190,12 +191,6 @@ bil_alloc = alloc_dollars["BIL"]
 print(f"BTC alloc: ${btc_alloc:.2f}, VOO alloc: ${voo_alloc:.2f}, BIL alloc: ${bil_alloc:.2f}")
 
 # ==========================================================
-# LOG WEEKLY DATA
-# ==========================================================
-log_allocation(today, fng_value, zone_desc, index_strength,
-               dol_ind_pct_change, m2_pct_change, Tres_Yield_pct_change, alloc)
-
-# ==========================================================
 # ALPACA ORDERS
 # ==========================================================
 api = REST(os.getenv("ALPACA_KEY_ID"), os.getenv("ALPACA_SECRET_KEY"),
@@ -209,6 +204,57 @@ for symbol, notional in allocations.items():
                          side="buy", type="market", time_in_force="day")
 
 # ==========================================================
+# PORTFOLIO SUMMARY + SHARPE RATIO
+# ==========================================================
+sharpe_ratio = None
+try:
+    print("\n========== CURRENT PORTFOLIO SUMMARY ==========")
+    account = api.get_account()
+    positions = api.list_positions()
+
+    total_equity = float(account.equity)
+    cash_balance = float(account.cash)
+    print(f"Total Equity: ${total_equity:,.2f} | Cash: ${cash_balance:,.2f}\n")
+
+    print(f"{'Symbol':<8}{'Qty':>8}{'Value($)':>12}{'Unrealized %':>16}")
+    print("-" * 44)
+    symbols = []
+    for pos in positions:
+        sym = pos.symbol
+        qty = float(pos.qty)
+        val = float(pos.market_value)
+        plpc = float(pos.unrealized_plpc) * 100
+        symbols.append(sym)
+        print(f"{sym:<8}{qty:>8.2f}{val:>12.2f}{plpc:>15.2f}%")
+
+    print("-" * 44)
+    print(f"Portfolio contains: {', '.join(symbols)}")
+
+    # Sharpe ratio calculation (~60d window)
+    all_returns = []
+    for sym in symbols:
+        data = yf.download(sym, period="60d", interval="1d")["Close"].pct_change().dropna()
+        all_returns.append(data)
+
+    if all_returns:
+        portfolio_returns = pd.concat(all_returns, axis=1).mean(axis=1)
+        sharpe_ratio = (portfolio_returns.mean() / portfolio_returns.std()) * np.sqrt(252)
+        print(f"\nEstimated Sharpe Ratio (60d): {sharpe_ratio:.2f}")
+    else:
+        print("\nNo positions found to calculate Sharpe ratio.")
+
+    print("===============================================\n")
+
+except Exception as e:
+    print("Error retrieving portfolio summary:", e)
+
+# ==========================================================
+# LOG WEEKLY DATA
+# ==========================================================
+log_allocation(today, fng_value, zone_desc, index_strength,
+               dol_ind_pct_change, m2_pct_change, Tres_Yield_pct_change, alloc, sharpe_ratio)
+
+# ==========================================================
 # TWILIO SUMMARY TEXT
 # ==========================================================
 summary = (
@@ -217,7 +263,8 @@ summary = (
     f"F&G Index: {fng_value} ({zone_desc})\n"
     f"USD Δ: {round(dol_ind_pct_change, 2):.2f}% | M2 Δ: {round(m2_pct_change, 2):.2f}% | 10Y Δ: {round(Tres_Yield_pct_change, 2):.2f}%\n"
     f"Index Strength: {index_strength:.2f} | BTC Factor: {btc_factor}\n"
-    f"Weights → BTC: {alloc['BTC-USD']:.2f}, VOO: {alloc['VOO']:.2f}, BIL: {alloc['BIL']:.2f}"
+    f"Weights → BTC: {alloc['BTC-USD']:.2f}, VOO: {alloc['VOO']:.2f}, BIL: {alloc['BIL']:.2f}\n"
+    f"Sharpe Ratio (60d): {sharpe_ratio:.2f}" if sharpe_ratio else ""
 )
 
 print(summary)
@@ -232,6 +279,7 @@ try:
     print("SMS sent:", message.sid)
 except Exception as e:
     print("Error sending SMS:", e)
+
 
 
 
