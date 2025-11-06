@@ -20,7 +20,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install yfinance requests pandas twilio
+          pip install --upgrade "yfinance>=0.2.40"
+          pip install pandas requests twilio
           pip install "alpaca-trade-api>=3.0.0"
 
       - name: Run script
