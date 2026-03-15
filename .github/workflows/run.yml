@@ -9,7 +9,7 @@ jobs:
   run:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # 👈 Required to push commits back to repo
+      contents: write  
 
     steps:
       # 1️ Checkout code
